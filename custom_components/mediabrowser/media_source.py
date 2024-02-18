@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from homeassistant.components.media_player import MediaClass
+from homeassistant.components.media_player import MediaClass, BrowseError
 from homeassistant.components.media_source import (
     BrowseMediaSource,
     MediaSource,
@@ -39,11 +39,7 @@ PLAYABLE_MEDIA_TYPES = {"Audio", "Video", "Photo"}
 
 async def async_get_media_source(hass: HomeAssistant) -> MediaSource:
     """Set up MediaBrowser media source."""
-
-    entries = hass.config_entries.async_entries(DOMAIN)
-    hubs = [hass.data[DOMAIN][entry.entry_id][DATA_HUB] for entry in entries]
-
-    return MBSource(hubs)
+    return MBSource(hass)
 
 
 class MBSource(MediaSource):
@@ -51,10 +47,20 @@ class MBSource(MediaSource):
 
     name: str = "Emby/Jellyfin"
 
-    def __init__(self, hubs: list[MediaBrowserHub]) -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         """Create a new media source."""
         super().__init__(DOMAIN)
-        self.hubs = {hub.server_id: hub for hub in hubs}
+        self.hass = hass
+        self.hubs = None
+
+    async def _set_hubs(self):
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        if entries[0].entry_id in self.hass.data[DOMAIN]:
+            hubs = [
+                self.hass.data[DOMAIN][entry.entry_id][DATA_HUB] for entry in entries
+            ]
+            self.hubs = {hub.server_id: hub for hub in hubs}
+            return self.hubs
 
     async def async_resolve_media(self, item: MediaSourceItem) -> PlayMedia:
         """Return a streamable URL and associated mime type."""
@@ -90,6 +96,9 @@ class MBSource(MediaSource):
 
     async def async_browse_media(self, item: MediaSourceItem) -> BrowseMediaSource:
         """Browse the specified item."""
+        if self.hubs is None and await self._set_hubs() is None:
+            raise BrowseError("Devices not Ready!)")
+
         if not item.identifier:
             return await self._async_browse_hubs()
 
